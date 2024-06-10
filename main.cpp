@@ -13,21 +13,20 @@
 const float L = 7;
 const float A = 2;
 const float B = A / 2;
-static bool odwrotna = true;
-static bool grappled = false;
 static float step = 0.1f;
 
-class box {
+class BoxClass {
 public:
     float x, y, z;
     float size;
+    bool grappled;
     //północ - dodatnie x
     //południe - ujemne x
     //wschód - dodatnie z
     //zachód - ujemne z
 
-    box(float x = 2.f * A + B, float y = B, float z = 0.f, float s = A)
-        :x(x), y(y), z(z), size(s) {}
+    BoxClass(float x = 2.f * A + B, float y = B, float z = 0.f, float s = A, bool g = false)
+        :x(x), y(y), z(z), size(s), grappled(g) {}
 
     lib::Vec3 getcoordinates() {
         lib::Vec3 a = { x, y, z };
@@ -77,18 +76,11 @@ public:
 
 };
 
+
 struct ArmState {
     float alpha; // obrót wokół osi y
     float beta;  //obrót wokól osi x
     float gamma; // obrót wokół osi z 
-};
-
-struct Robot {
-    float x;
-    float y;
-    float z;
-    lib::Vec3 rotationAxis;
-    ArmState arm1, arm2;
 };
 struct CamPoint {
     float x;
@@ -100,11 +92,85 @@ struct CamPoint {
     float psi;
 };
 
-static ArmState arm1 = { 0.0f, 0.0f, -0.5f };
-static ArmState arm2 = { 0.0f, PI32 / 2 , 0.0f };
-static Robot hand = { 0.1f,    3.f,     0.1f, {0.f, 0.f, 0.f}, arm1, arm2 };
+static BoxClass box;
+static ArmState arm = { 0.0f, 0.0f, -0.5f };
+static ArmState forearm = { 0.0f, PI32 / 2 , 0.0f };
 static CamPoint cam = { 0.620777f,     4.79426f,     8.75384f,  {0.f, 0.f, 0.f}, 10.0f, 0.5f, 1.5f };
-static box box1;
+
+class Robot {
+public:
+    bool odwrotna;
+    float x, y, z;
+    lib::Vec3 rotationAxis;
+    ArmState arm1, arm2;
+
+    Robot(bool o = true, float x = 0.1, float y = 3.f, float z = 0.1f, lib::Vec3 axis = { 0.f, 0.f, 0.f }, ArmState a1 = arm, ArmState a2 = forearm)
+        :odwrotna(o), x(x), y(y), z(z), rotationAxis(axis), arm1(a1), arm2(a2) {}
+
+    void CalculateArmsOdwrotna() {
+        arm1.alpha = -atan2f(z, x);
+        arm1.gamma = -atan2f((sqrtf((x) * (x) + (z) * (z))), y) + acosf(sqrtf((x) * (x) + (y) * (y) + (z) * (z)) / (2 * L));
+        arm2.gamma = -2 * acosf(sqrtf((x) * (x) + (y) * (y) + (z) * (z)) / (2 * L));
+        rotationAxis = { sinf(arm1.alpha), 0.f , cosf(arm1.alpha) };
+    }
+
+    void CalculateArmsNieOdwrotna() {
+        rotationAxis = { sinf(arm1.alpha), 0.f , cosf(arm1.alpha) };
+    }
+
+    void CalculateCam() {
+        cam.x = cam.r * cosf(cam.theta) * cosf(cam.psi);
+        cam.z = cam.r * cosf(cam.theta) * sinf(cam.psi);
+        cam.y = cam.r * sinf(cam.theta);
+    }
+    void handle_input(int key) {
+        float arm_length = sqrtf(powf(x, 2) + powf(y, 2) + powf(z, 2));
+
+        switch (key) {
+        case GLFW_KEY_1: odwrotna = !odwrotna; break;
+
+        case GLFW_KEY_A: if (odwrotna and (arm_length < 2 * L - 0.05f or sqrtf(powf(x - 0.1f, 2) + powf(y, 2) + powf(z, 2)) < arm_length) and box.check_collision(x, y, z) != 7) x -= 0.1f;
+                       else arm1.alpha -= 0.1f;  break;
+        case GLFW_KEY_D: if (odwrotna and (arm_length < 2 * L - 0.05f or sqrtf(powf(x + 0.1f, 2) + powf(y, 2) + powf(z, 2)) < arm_length) and box.check_collision(x, y, z) != 2) x += 0.1f;
+                       else arm1.alpha += 0.1f; break;
+        case GLFW_KEY_S: if (odwrotna and (arm_length < 2 * L - 0.05f or sqrtf(powf(x, 2) + powf(y, 2) + powf(z + 0.1f, 2)) < arm_length) and box.check_collision(x, y, z) != 4) z += 0.1f;
+                       else if (arm1.gamma > (-0.5f * arm2.gamma - 1.5f))arm1.gamma -= 0.1f; break;
+        case GLFW_KEY_W: if (odwrotna and (arm_length < 2 * L - 0.05f or sqrtf(powf(x, 2) + powf(y, 2) + powf(z - 0.1f, 2)) < arm_length) and box.check_collision(x, y, z) != 3) z -= 0.1f;
+                       else if (arm1.gamma < 1.2f) arm1.gamma += 0.1f; break;
+        case GLFW_KEY_Q: if (odwrotna and y > 0.1f and !box.grappled and box.check_collision(x, y, z) != 5)y -= 0.1f;
+                       else if (odwrotna and y > A and box.grappled and box.check_collision(x, y, z) != 5)y -= 0.1f;
+                       else if (arm2.gamma > (-2.f * arm1.gamma - 2.4f)) arm2.gamma -= 0.1f; break;
+        case GLFW_KEY_E: if (odwrotna and (arm_length < 2 * L - 0.05f or sqrtf(powf(x, 2) + powf(y + 0.1f, 2) + powf(z, 2)) < arm_length)) y += 0.1f;
+                       else if (arm2.gamma < 0.f) arm2.gamma += 0.1f; break;
+        case GLFW_KEY_U: if (cam.theta > 0.2f)cam.theta -= 0.1f;  break;
+        case GLFW_KEY_O: if (cam.theta < 1.5f) cam.theta += 0.1f; break;
+        case GLFW_KEY_L: cam.psi += 0.1f; break;
+        case GLFW_KEY_J: cam.psi -= 0.1f; break;
+        case GLFW_KEY_I: if (cam.r > 5.f) cam.r -= 1.0f; break;
+        case GLFW_KEY_K: if (cam.r < 100.f) cam.r += 1.0f; break;
+        case GLFW_KEY_G: if (box.check_collision(x, y, z) == 6) { box.grappled = true; }
+                       else { box.grappled = false; } break;
+        }
+
+
+
+        if (box.grappled)box.follow_hand(x, y, z);
+        if (odwrotna)CalculateArmsOdwrotna();
+        else if (!odwrotna)CalculateArmsNieOdwrotna();
+        CalculateCam();
+        //std::cout << box.check_collision(x, y, z) << "    " << box.static CamPoint cam = { 0.620777f,     4.79426f,     8.75384f,  {0.f, 0.f, 0.f}, 10.0f, 0.5f, 1.5f };
+        //std::cout << arm1.alpha << "    " << arm1.gamma << "     " << arm2.gamma << "     " << std::endl;
+        //std::cout << hand.x << "    "<< hand.y << "     " << hand.z << "     " << std::endl;
+        //std::cout << fabs(box1.x - hand.x) << "    " << fabs(box1.y - hand.y) << "     " << fabs(box1.z - hand.z) << "     " << std::endl;
+        //std::cout << cam.x << "     " << cam.y << "     " << cam.z << "     " << std::endl;
+        //theta <0.1 , 1.5> r < 5, 100> psi <-inf, inf> -0.25625     4.79426     8.77208
+    }
+};
+
+
+//static Robot hand = { 0.1f,    3.f,     0.1f, {0.f, 0.f, 0.f}, arm1, arm2 };
+
+static Robot hand;
 static GLuint floor_vao, floor_vbo, floor_ebo;
 static GLuint box_vao, box_vbo, box_ebo;
 
@@ -290,62 +356,9 @@ static void error_callback(int error, const char* description)
     fprintf(stderr, "Error: %s\n", description);
 }
 
-static void CalculateArmsOdwrotna() {
-    arm1.alpha = -atan2f(hand.z, hand.x);
-    arm1.gamma = -atan2f((sqrtf((hand.x) * (hand.x) + (hand.z) * (hand.z))), hand.y) + acosf(sqrtf((hand.x) * (hand.x) + (hand.y) * (hand.y) + (hand.z) * (hand.z)) / (2 * L));
-    arm2.gamma = -2 * acosf(sqrtf((hand.x) * (hand.x) + (hand.y) * (hand.y) + (hand.z) * (hand.z)) / (2 * L));
-    hand.rotationAxis = { sinf(arm1.alpha), 0.f , cosf(arm1.alpha) };
-}
-static void CalculateArmsNieOdwrotna() {
-    hand.rotationAxis = { sinf(arm1.alpha), 0.f , cosf(arm1.alpha) };
-}
-static void CalculateCam() {
-    cam.x = cam.r * cosf(cam.theta) * cosf(cam.psi);
-    cam.z = cam.r * cosf(cam.theta) * sinf(cam.psi);
-    cam.y = cam.r * sinf(cam.theta);
-}
-static void handle_input(int key) {
-    float arm_length = sqrtf(powf(hand.x, 2) + powf(hand.y, 2) + powf(hand.z, 2));
 
-        switch (key) {
-        case GLFW_KEY_1: odwrotna = !odwrotna; break;
 
-        case GLFW_KEY_A: if (odwrotna and (arm_length < 2 * L - 0.05f or sqrtf(powf(hand.x - 0.1f, 2) + powf(hand.y, 2) + powf(hand.z, 2)) < arm_length) and box1.check_collision(hand.x, hand.y, hand.z) != 7) hand.x -= 0.1f;
-                       else arm1.alpha -= 0.1f;  break;
-        case GLFW_KEY_D: if (odwrotna and (arm_length < 2 * L - 0.05f or sqrtf(powf(hand.x + 0.1f, 2) + powf(hand.y, 2) + powf(hand.z, 2)) < arm_length) and box1.check_collision(hand.x, hand.y, hand.z) != 2) hand.x += 0.1f;
-                       else arm1.alpha += 0.1f; break;
-        case GLFW_KEY_S: if (odwrotna and (arm_length < 2 * L - 0.05f or sqrtf(powf(hand.x, 2) + powf(hand.y, 2) + powf(hand.z + 0.1f, 2)) < arm_length) and box1.check_collision(hand.x, hand.y, hand.z) != 4) hand.z += 0.1f;
-                       else if (arm1.gamma > (-0.5f * arm2.gamma - 1.5f))arm1.gamma -= 0.1f; break;
-        case GLFW_KEY_W: if (odwrotna and (arm_length < 2 * L - 0.05f or sqrtf(powf(hand.x, 2) + powf(hand.y, 2) + powf(hand.z - 0.1f, 2)) < arm_length) and box1.check_collision(hand.x, hand.y, hand.z) != 3) hand.z -= 0.1f;
-                       else if (arm1.gamma < 1.2f) arm1.gamma += 0.1f; break;
-        case GLFW_KEY_Q: if (odwrotna and hand.y > 0.1f and !grappled and box1.check_collision(hand.x, hand.y, hand.z) != 5)hand.y -= 0.1f;
-                       else if (odwrotna and hand.y > A and grappled and box1.check_collision(hand.x, hand.y, hand.z) != 5)hand.y -= 0.1f;
-                       else if (arm2.gamma > (-2.f * arm1.gamma - 2.4f)) arm2.gamma -= 0.1f; break;
-        case GLFW_KEY_E: if (odwrotna and (arm_length < 2 * L - 0.05f or sqrtf(powf(hand.x, 2) + powf(hand.y + 0.1f, 2) + powf(hand.z, 2)) < arm_length)) hand.y += 0.1f;
-                       else if (arm2.gamma < 0.f) arm2.gamma += 0.1f; break;
-        case GLFW_KEY_U: if (cam.theta > 0.2f)cam.theta -= 0.1f;  break;
-        case GLFW_KEY_O: if (cam.theta < 1.5f) cam.theta += 0.1f; break;
-        case GLFW_KEY_L: cam.psi += 0.1f; break;
-        case GLFW_KEY_J: cam.psi -= 0.1f; break;
-        case GLFW_KEY_I: if (cam.r > 5.f) cam.r -= 1.0f; break;
-        case GLFW_KEY_K: if (cam.r < 100.f) cam.r += 1.0f; break;
-        case GLFW_KEY_G: if (box1.check_collision(hand.x, hand.y, hand.z) == 6) { grappled = true; }
-                       else { grappled = false; } break;
-        }
-    
-    
 
-    if (grappled)box1.follow_hand(hand.x, hand.y, hand.z);
-    if (odwrotna)CalculateArmsOdwrotna();
-    else if (!odwrotna)CalculateArmsNieOdwrotna();
-    CalculateCam();
-    std::cout << box1.check_collision(hand.x, hand.y, hand.z) << "    " << grappled << std::endl;
-    //std::cout << arm1.alpha << "    " << arm1.gamma << "     " << arm2.gamma << "     " << std::endl;
-    //std::cout << hand.x << "    "<< hand.y << "     " << hand.z << "     " << std::endl;
-    //std::cout << fabs(box1.x - hand.x) << "    " << fabs(box1.y - hand.y) << "     " << fabs(box1.z - hand.z) << "     " << std::endl;
-    //std::cout << cam.x << "     " << cam.y << "     " << cam.z << "     " << std::endl;
-    //theta <0.1 , 1.5> r < 5, 100> psi <-inf, inf> -0.25625     4.79426     8.77208
-}
 
 static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
@@ -355,7 +368,7 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
         glfwSetWindowShouldClose(window, GLFW_TRUE);
 
     if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-        handle_input(key);
+        hand.handle_input(key);
     }
 }
 
@@ -543,9 +556,9 @@ void render_scene(GLuint program, GLuint vertex_array, GLuint EBO, GLuint uboMat
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 
-    lib::Mat4 followalpha = lib::create_rotation_y(arm1.alpha);
-    lib::Mat4 followgamma1 = lib::create_rotation(hand.rotationAxis, arm1.gamma);
-    lib::Mat4 followgamma2 = lib::create_rotation(hand.rotationAxis, arm2.gamma);
+    lib::Mat4 followalpha = lib::create_rotation_y(hand.arm1.alpha);
+    lib::Mat4 followgamma1 = lib::create_rotation(hand.rotationAxis, hand.arm1.gamma);
+    lib::Mat4 followgamma2 = lib::create_rotation(hand.rotationAxis, hand.arm2.gamma);
     lib::Mat4 model1 = followgamma1 * followalpha;
     render_cube(program, vertex_array, EBO, uboMatrices, projection, view, model1);
 
@@ -554,7 +567,7 @@ void render_scene(GLuint program, GLuint vertex_array, GLuint EBO, GLuint uboMat
     lib::Mat4 model2 = followgamma1 * translate * followgamma2 * followalpha;
     render_cube(program, vertex_array, EBO, uboMatrices, projection, view, model2);
 
-    lib::Mat4 box_translate = lib::create_translate({ box1.x, box1.y, box1.z});
+    lib::Mat4 box_translate = lib::create_translate({ box.x, box.y, box.z});
     render_box(program, box_vao, box_ebo, uboMatrices, projection, view, box_translate);
 
     lib::Mat4 floor_model = lib::create_diagonal_matrix();
@@ -569,13 +582,12 @@ void render_scene(GLuint program, GLuint vertex_array, GLuint EBO, GLuint uboMat
 
     lib::Mat4 sphere1_translate = lib::create_translate({ 0.0f, 0.0f, 0.0f });
     lib::Mat4 sphere1_model = followalpha * sphere1_translate * followgamma1;
-
     renderSphere(sphere1_vao, sphere1Indices.size(), sphere1_model, program);
 
 }
 int main(void)
 {
-    CalculateArmsOdwrotna();
+    hand.CalculateArmsOdwrotna();
     glfwSetErrorCallback(error_callback);
 
     if (!glfwInit())
@@ -631,14 +643,14 @@ int main(void)
         glViewport(0, 0, width, height);
 
         float time = (float)glfwGetTime();
-        box1.update_gravity();
+        box.update_gravity();
         //std::cout << time << std::endl;
         lib::Vec3 camera_pos = { cam.x, cam.y, cam.z };
         lib::Vec3 camera_target = { 0.0f, 1.0f, 0.0f };
         lib::Mat4 view = lib::create_look_at(camera_pos, camera_target, { 0.0f, L / 2.f, 0.0f });
         lib::Mat4 projection = lib::create_perspective(lib::deg_to_rad(50.0f), (f32)width / height, 0.5f, 100.0f);
 
-        render_scene(program, vertex_array, EBO, uboMatrices, projection, view, arm1, arm2);
+        render_scene(program, vertex_array, EBO, uboMatrices, projection, view, hand.arm1, hand.arm2);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
